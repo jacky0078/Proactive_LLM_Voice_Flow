@@ -45,6 +45,7 @@ EventLoop::EventLoop()
       wakeupFd_(createEventfd()),
       wakeupChannel_(new Channel(this, wakeupFd_)),
       currentActiveChannel_(NULL) {
+  threadId_ = getThreadId();
   LOG(INFO) << "EventLoop created " << this << " in thread " << threadId_;
   if (t_loopInThisThread) {
     LOG(FATAL) << "Another EventLoop " << t_loopInThisThread
@@ -56,7 +57,6 @@ EventLoop::EventLoop()
   // we are always reading the wakeupfd
   wakeupChannel_->enableReading();
 
-  threadId_ = getThreadId();
 }
 
 EventLoop::~EventLoop() {

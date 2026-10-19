@@ -14,9 +14,11 @@ public:
     std::string output_url;
     std::string inference_url;
     int port_;
+    int output_slot = -1;
+    int input_slot  = -1;
 
     unit_data();
     void init_zmq(const std::string &url);
-    void send_msg(const std::string &json_str);
+    int send_msg(const std::string &json_str);
     ~unit_data();
 };

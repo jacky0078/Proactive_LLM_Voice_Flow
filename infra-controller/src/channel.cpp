@@ -1,170 +1,106 @@
+/* SPDX-License-Identifier: MIT */
 #include "channel.h"
-#include "sample_log.h"
-#include <iostream>
-
 using namespace StackFlows;
-
-llm_channel_obj::llm_channel_obj(const std::string &_publisher_url, const std::string &inference_url,
-                                 const std::string &unit_name)
-    : unit_name_(unit_name), inference_url_(inference_url), publisher_url_(_publisher_url)
+nlohmann::json StackFlows::structured_error(const nlohmann::json& error)
 {
-    // publisher_url_ = _publisher_url;
-    zmq_url_index_ = -1000;
-    // 初始化zmq_连接池，-1位置为pub连接，-2位置为push连接 -> pub和push连接只有一个
-    // sub通信有多个连接，存储在zmq_的非负位置，通过work_id区分不同的订阅者
-    zmq_[-1] = std::make_shared<pzmq>(publisher_url_, ZMQ_PUB);
-    zmq_[-2].reset();
+    if (error.is_null() || (error.is_string() && error.get<std::string>().empty()))
+        return {{"code", 0}, {"message", ""}};
+    if (error.is_object()) return error;
+    if (error.is_string()) {
+        auto parsed = nlohmann::json::parse(error.get<std::string>(), nullptr, false);
+        if (parsed.is_object()) return parsed;
+    }
+    return {{"code", -1}, {"message", error.is_string() ? error.get<std::string>() : error.dump()}};
 }
-
+llm_channel_obj::llm_channel_obj(const std::string& pub, const std::string& input, const std::string& name)
+    : unit_name_(name), inference_url_(input), publisher_url_(pub), publisher_(std::make_unique<pzmq>(pub, ZMQ_PUB))
+{
+}
 llm_channel_obj::~llm_channel_obj()
 {
-    std::cout << "llm_channel_obj 析构" << std::endl;
+    subscribers_.clear();
 }
-
-
-void llm_channel_obj::subscriber_event_call(const std::function<void(const std::string &, const std::string &)> &call,
-                                            pzmq *_pzmq, const std::shared_ptr<pzmq_data> &raw)
+std::string llm_channel_obj::input_url(const std::string& work)
 {
-    auto _raw = raw->string();
-    const char *user_inference_flage_str = "\"action\"";
-    std::size_t pos = _raw.find(user_inference_flage_str);
-    while (true)
-    {
-        if (pos == std::string::npos)
-        {
-            break;
-        }
-        else if ((pos > 0) && (_raw[pos - 1] != '\\'))
-        {
-            std::string zmq_com = sample_json_str_get(_raw, "zmq_com");
-            if (!zmq_com.empty())
-                set_push_url(zmq_com);
-            request_id_ = sample_json_str_get(_raw, "request_id");
-            work_id_ = sample_json_str_get(_raw, "work_id");
-            break;
-        }
-        pos = _raw.find(user_inference_flage_str, pos + sizeof(user_inference_flage_str));
-    }
-    call(sample_json_str_get(_raw, "object"), sample_json_str_get(_raw, "data"));
+    if (work.empty()) return inference_url_;
+    auto url = unit_call("sys", "sql_select", work + ".out_port");
+    if (url.empty()) throw std::runtime_error("upstream task not found: " + work);
+    return url;
 }
-void message_handler(pzmq *zmq_obj, const std::shared_ptr<pzmq_data> &data)
+int llm_channel_obj::subscribe_message(const std::string& work, MessageCallback callback)
 {
-    std::cout << "Received: " << data->string() << std::endl;
-}
-
-// 订阅指定的worrk_id接口
-int llm_channel_obj::subscriber_work_id(const std::string &work_id,
-                                        const std::function<void(const std::string &, const std::string &)> &call)
-{
-    int id_num;
-    std::string subscriber_url;
-    std::regex pattern(R"((\w+)\.(\d+))");
-    std::smatch matches;
-    if ((!work_id.empty()) && std::regex_match(work_id, matches, pattern))
-    {
-        if (matches.size() == 3)
-        {
-            // std::string part1 = matches[1].str();
-            id_num = std::stoi(matches[2].str());
-            std::string input_url_name = work_id + ".out_port";
-            std::string input_url = unit_call("sys", "sql_select", input_url_name);
-            if (input_url.empty())
-            {
-                return -1;
-            }
-            subscriber_url = input_url;
-        }
-    }
-    else
-    {
-        id_num = 0;
-        subscriber_url = inference_url_;
-    }
-
-    // 根据work_id创建对应的zmq_sub连接，并将回调函数绑定到该连接上，接收数据后通过回调函数处理
-    zmq_[id_num] = std::make_shared<pzmq>(
-        subscriber_url, ZMQ_SUB,
-        std::bind(&llm_channel_obj::subscriber_event_call, this, call, std::placeholders::_1, std::placeholders::_2));
+    auto url = input_url(work);
+    subscriber(url, [this, callback](pzmq*, const std::shared_ptr<pzmq_data>& raw) {
+        auto j = nlohmann::json::parse(raw->string());
+        RequestContext context{j.at("request_id").get<std::string>(), j.value("zmq_com", output_url_)};
+        callback(j, context);
+    });
     return 0;
 }
-
-// 停止订阅指定work_id接口，关闭对应的zmq_sub连接
-void llm_channel_obj::stop_subscriber_work_id(const std::string &work_id)
+int llm_channel_obj::subscriber_work_id(const std::string& work,
+                                        const std::function<void(const std::string&, const std::string&)>& callback)
 {
-    int id_num;
-    std::regex pattern(R"((\w+)\.(\d+))");
-    std::smatch matches;
-    if (std::regex_match(work_id, matches, pattern))
-    {
-        if (matches.size() == 3)
-        {
-            // std::string part1 = matches[1].str();
-            id_num = std::stoi(matches[2].str());
-        }
-    }
+    return subscribe_message(work, [this, callback](const nlohmann::json& j, const RequestContext& context) {
+        request_id_ = context.request_id;  // Legacy synchronous API. Async nodes use explicit contexts.
+        output_url_ = context.reply_url;
+        auto data   = j.at("data");
+        callback(j.at("object"), data.is_string() ? data.get<std::string>() : data.dump());
+    });
+}
+void llm_channel_obj::subscriber(const std::string& url, const pzmq::msg_callback_fun& cb)
+{
+    if (subscribers_.count(url)) return;
+    subscribers_[url] = std::make_unique<pzmq>(url, ZMQ_SUB, cb);
+}
+void llm_channel_obj::stop_subscriber(const std::string& url)
+{
+    if (url.empty())
+        subscribers_.clear();
     else
+        subscribers_.erase(url);
+}
+void llm_channel_obj::stop_subscriber_work_id(const std::string& work)
+{
+    stop_subscriber(input_url(work));
+}
+int llm_channel_obj::send_raw_to_pub(const std::string& s)
+{
+    return publisher_->send_data(s);
+}
+int llm_channel_obj::push(const std::string& url, const std::string& s)
+{
+    if (url.empty()) return -1;
+    std::shared_ptr<pzmq> socket;
     {
-        id_num = 0;
+        std::lock_guard<std::mutex> l(output_mutex_);
+        auto& entry = outputs_[url];
+        if (!entry) entry = std::make_shared<pzmq>(url, ZMQ_PUSH);
+        socket = entry;
     }
-    if (zmq_.find(id_num) != zmq_.end())
-        zmq_.erase(id_num);
+    return socket->send_data(s);
 }
-
-// 通过url订阅接口，创建zmq_sub连接 -> 通用订阅接口
-void llm_channel_obj::subscriber(const std::string &zmq_url, const pzmq::msg_callback_fun &call)
+int llm_channel_obj::send_raw_to_usr(const std::string& s)
 {
-    zmq_url_map_[zmq_url] = zmq_url_index_--;
-    zmq_[zmq_url_map_[zmq_url]] = std::make_shared<pzmq>(zmq_url, ZMQ_SUB, call);
+    return push(output_url_, s);
 }
-
-void llm_channel_obj::stop_subscriber(const std::string &zmq_url)
+int llm_channel_obj::send_raw_for_url(const std::string& url, const std::string& s)
 {
-    if (zmq_url.empty())
-    {
-        zmq_.clear();
-        zmq_url_map_.clear();
-    }
-    else if (zmq_url_map_.find(zmq_url) != zmq_url_map_.end())
-    {
-        zmq_.erase(zmq_url_map_[zmq_url]);
-        zmq_url_map_.erase(zmq_url);
-    }
+    pzmq p(url, ZMQ_PUSH);
+    return p.send_data(s);
 }
-
-int llm_channel_obj::send_raw_to_pub(const std::string &raw)
+int llm_channel_obj::send_with_context(const RequestContext& c, const std::string& object, const nlohmann::json& data,
+                                       const nlohmann::json& error)
 {
-    return zmq_[-1]->send_data(raw);
+    nlohmann::json j{{"request_id", c.request_id}, {"work_id", work_id_}, {"created", time(nullptr)},
+                     {"object", object},           {"data", data},        {"error", structured_error(error)},
+                     {"zmq_com", c.reply_url}};
+    auto wire = j.dump() + "\n";
+    int rc    = send_raw_to_pub(wire);
+    if (enoutput_ && push(c.reply_url, wire)) rc = -1;
+    return rc;
 }
-
-int llm_channel_obj::send_raw_to_usr(const std::string &raw)
+int llm_channel_obj::send(const std::string& object, const nlohmann::json& data, const nlohmann::json& error,
+                          const std::string& work)
 {
-    if (zmq_[-2])
-    {
-        return zmq_[-2]->send_data(raw);
-    }
-    else
-    {
-        return -1;
-    }
-}
-
-// 新用户连接 重置zmq_[-2]连接池，更新push-zmq通信
-void llm_channel_obj::set_push_url(const std::string &url)
-{
-    if (output_url_ != url)
-    {
-        output_url_ = url;
-        zmq_[-2].reset(new pzmq(output_url_, ZMQ_PUSH));
-    }
-}
-
-void llm_channel_obj::cear_push_url()
-{
-    zmq_[-2].reset();
-}
-
-int llm_channel_obj::send_raw_for_url(const std::string &zmq_url, const std::string &raw)
-{
-    pzmq _zmq(zmq_url, ZMQ_PUSH);
-    return _zmq.send_data(raw);
+    return send_with_context({request_id_, output_url_}, object, data, error);
 }

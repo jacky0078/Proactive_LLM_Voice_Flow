@@ -1,0 +1,17 @@
+{
+  "asr": {
+    "model_dir": "${VOICE_DEPS_ROOT}/models/asr/zipformer",
+    "num_threads": 2,
+    "enoutput": true
+  },
+  "llm": {
+    "backend": "mock",
+    "enoutput": true
+  },
+  "tts": {
+    "model_path": "${VOICE_DEPS_ROOT}/models/tts/single_speaker_fast.bin",
+    "num_threads": 2,
+    "stream_timeout_seconds": 120,
+    "enoutput": true
+  }
+}

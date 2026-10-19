@@ -1,0 +1,26 @@
+set(rkllm_test_include "${RKLLM_ROOT}/include")
+if(EXISTS "${rkllm_test_include}/rkllm.h")
+    add_library(edge_rkllm_test_backend STATIC ../node/llm/rkllm_backend.cpp rkllm_stub.cpp)
+    target_include_directories(edge_rkllm_test_backend PUBLIC ../node/llm "${rkllm_test_include}")
+    target_link_libraries(edge_rkllm_test_backend PUBLIC stackflow)
+    add_executable(rkllm_backend_test rkllm_backend_test.cpp)
+    target_link_libraries(rkllm_backend_test PRIVATE edge_rkllm_test_backend)
+    add_test(NAME rkllm_backend COMMAND rkllm_backend_test)
+    set_tests_properties(rkllm_backend PROPERTIES TIMEOUT 30)
+    add_executable(edge_llm_sdk_test ../node/common/main.cpp ../node/llm/llm_task.cpp)
+    target_compile_definitions(edge_llm_sdk_test PRIVATE EDGE_NODE_NAME="llm" EDGE_HAS_RKLLM=1)
+    target_link_libraries(edge_llm_sdk_test PRIVATE edge_voice_common edge_rkllm_test_backend)
+endif()
+
+if(EDGE_BUILD_MANAGER AND EDGE_BUILD_ASR AND EDGE_BUILD_TTS AND NOT EDGE_ENABLE_RKLLM)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(NAME voice_integration COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/voice_integration.py"
+        --build-dir "${CMAKE_BINARY_DIR}" --voice-deps-root "${VOICE_DEPS_ROOT}"
+        --output-dir "${CMAKE_BINARY_DIR}/test-artifacts")
+    set_tests_properties(voice_integration PROPERTIES TIMEOUT 180 LABELS "integration")
+endif()
+
+add_executable(wav_test wav_test.cpp)
+target_link_libraries(wav_test PRIVATE edge_voice_common)
+add_test(NAME wav_io COMMAND wav_test)
+set_tests_properties(wav_io PROPERTIES TIMEOUT 10)

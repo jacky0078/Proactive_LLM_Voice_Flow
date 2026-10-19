@@ -66,17 +66,11 @@ std::string TcpConnection::getTcpInfoString() const {
 
 // FIXME efficiency!!!
 void TcpConnection::send(Buffer *buf) {
-  if (state_ == kConnected) {
-    if (loop_->isInLoopThread()) {
-      sendInLoop(buf->peek(), buf->readableBytes());
-      buf->retrieveAll();
-    } else {
-      std::function<void(const std::string &)> fp =
-          [this](const std::string &str) { this->sendInLoop(str); };
-
-      loop_->runInLoop(std::bind(fp, buf->retrieveAllAsString()));
-    }
-  }
+  auto self = shared_from_this();
+  auto message = buf->retrieveAllAsString();
+  loop_->runInLoop([self, message = std::move(message)] {
+    if (self->state_ == kConnected) self->sendInLoop(message);
+  });
 }
 
 void TcpConnection::sendInLoop(const std::string &message) {

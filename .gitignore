@@ -2,3 +2,10 @@ build
 install
 !docker/build
 !docker/build/install
+__pycache__/
+*.pyc
+/Testing/
+/artifacts/
+/LLM_Voice_Flow-master/
+/voice-deps/
+/.voice-deps-*/

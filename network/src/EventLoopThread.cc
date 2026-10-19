@@ -11,15 +11,11 @@ namespace network
   EventLoopThread::~EventLoopThread()
   {
     exiting_ = true;
-    if (loop_ !=
-        NULL) // not 100% race-free, eg. threadFunc could be running callback_.
     {
-      // still a tiny chance to call destructed object, if threadFunc exits just
-      // now. but when EventLoopThread destructs, usually programming is exiting
-      // anyway.
-      loop_->quit();
-      thread_->join();
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (loop_) loop_->quit();
     }
+    if (thread_ && thread_->joinable()) thread_->join();
   }
 
   EventLoop *EventLoopThread::startLoop()
