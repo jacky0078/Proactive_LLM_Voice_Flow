@@ -29,7 +29,7 @@ cmake -S "$project_dir" -B "$build_dir" \
     -DCMAKE_BUILD_TYPE=Release -DZMQ_ROOT="$zmq_prefix" \
     -UVOICE_FLOW_ROOT -URKLLM_INCLUDE_DIR -URKLLM_LIBRARY \
     -DVOICE_DEPS_ROOT="$voice_deps_root" -DRKLLM_ROOT="$rkllm_root" \
-    -DEDGE_BUILD_MANAGER=OFF -DEDGE_BUILD_ASR=OFF -DEDGE_BUILD_TTS=OFF \
+    -DEDGE_BUILD_MANAGER=OFF -DEDGE_BUILD_COCKPIT=OFF -DEDGE_BUILD_ASR=OFF -DEDGE_BUILD_TTS=OFF \
     -DEDGE_ENABLE_RKLLM=ON -DBUILD_TESTING=OFF
 cmake --build "$build_dir" -j "${EDGE_BUILD_JOBS:-4}"
 cmake --install "$build_dir" --prefix "$build_dir/package"

@@ -46,6 +46,7 @@ extern "C" int rkllm_run(LLMHandle handle, RKLLMInput* input, RKLLMInferParam* p
     if (!userdata || param->keep_history || param->mode != RKLLM_INFER_GENERATE ||
         input->input_type != RKLLM_INPUT_PROMPT)
         return -15;
+    model->aborted = false;
     ++stub_runs;
     model->running = true;
     std::string prompt(input->prompt_input);
@@ -69,6 +70,12 @@ extern "C" int rkllm_run(LLMHandle handle, RKLLMInput* input, RKLLMInferParam* p
     if (prompt == "return-fail") {
         model->running = false;
         return -17;
+    }
+    if (prompt == "oversized-callback") {
+        emit(std::string(8193, 'a'), RKLLM_RUN_NORMAL);
+        emit("", RKLLM_RUN_FINISH);
+        model->running = false;
+        return 0;
     }
     emit("", RKLLM_RUN_WAITING);
     emit("<thi", RKLLM_RUN_NORMAL);

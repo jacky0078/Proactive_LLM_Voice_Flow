@@ -24,3 +24,21 @@ add_executable(wav_test wav_test.cpp)
 target_link_libraries(wav_test PRIVATE edge_voice_common)
 add_test(NAME wav_io COMMAND wav_test)
 set_tests_properties(wav_io PROPERTIES TIMEOUT 10)
+
+if(EDGE_BUILD_COCKPIT)
+    add_executable(cockpit_core_test cockpit_core_test.cpp)
+    target_link_libraries(cockpit_core_test PRIVATE edge_cockpit_core)
+    add_test(NAME cockpit_core COMMAND cockpit_core_test)
+    set_tests_properties(cockpit_core PROPERTIES TIMEOUT 15)
+    add_executable(cockpit_concurrency_test cockpit_concurrency_test.cpp)
+    target_link_libraries(cockpit_concurrency_test PRIVATE edge_cockpit_core)
+    add_test(NAME cockpit_concurrency COMMAND cockpit_concurrency_test)
+    set_tests_properties(cockpit_concurrency PROPERTIES TIMEOUT 15)
+endif()
+
+if(EDGE_BUILD_COCKPIT AND EDGE_BUILD_MANAGER AND EDGE_BUILD_ASR AND EDGE_BUILD_TTS AND NOT EDGE_ENABLE_RKLLM)
+    add_test(NAME cockpit_integration COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cockpit_integration.py"
+        --build-dir "${CMAKE_BINARY_DIR}" --voice-deps-root "${VOICE_DEPS_ROOT}"
+        --output-dir "${CMAKE_BINARY_DIR}/cockpit-test-artifacts")
+    set_tests_properties(cockpit_integration PROPERTIES TIMEOUT 180 LABELS "integration")
+endif()

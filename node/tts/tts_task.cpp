@@ -78,11 +78,17 @@ private:
     }
     void process(const VoiceMessage& message) override
     {
-        if (message.body.at("object") != "llm.utf-8.stream") throw std::runtime_error("TTS expects llm.utf-8.stream");
-        const auto& data = message.body.at("data");
-        int index        = data.at("index").get<int>();
-        auto text        = data.at("delta").get<std::string>();
-        bool finish      = data.at("finish").get<bool>();
+        auto object = message.body.at("object").get<std::string>();
+        if (object != "llm.utf-8.stream" && object != "tts.utf-8")
+            throw std::runtime_error("TTS expects llm.utf-8.stream or tts.utf-8");
+        Json data = message.body.at("data");
+        if (object == "tts.utf-8") {
+            if (!data.is_string() || data.get<std::string>().empty()) throw std::runtime_error("TTS text is empty");
+            data = {{"index", 0}, {"delta", data}, {"finish", true}};
+        }
+        int index   = data.at("index").get<int>();
+        auto text   = data.at("delta").get<std::string>();
+        bool finish = data.at("finish").get<bool>();
         if (text.size() > 4096) throw std::runtime_error("TTS text fragment too long");
         if (index != expected_index_)
             throw std::runtime_error("TTS missing, duplicate or out-of-order stream fragment");

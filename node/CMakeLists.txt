@@ -36,6 +36,10 @@ if(EDGE_BUILD_ASR)
         set_target_properties(edge_sherpa PROPERTIES
             IMPORTED_LOCATION "${SHERPA_ONNX_BUILD_DIR}/lib/libsherpa-onnx-cxx-api.so"
             INTERFACE_INCLUDE_DIRECTORIES "${sherpa_root}")
+        find_library(EDGE_EXISTING_ORT_LIBRARY onnxruntime
+            PATHS "${SHERPA_ONNX_BUILD_DIR}/_deps/onnxruntime-src/lib" NO_DEFAULT_PATH REQUIRED)
+        # 显式链接依赖，避免复用库仍携带迁移前的绝对 RUNPATH。
+        set_property(TARGET edge_sherpa APPEND PROPERTY INTERFACE_LINK_LIBRARIES "-Wl,--no-as-needed;${EDGE_EXISTING_ORT_LIBRARY};-Wl,--as-needed")
     else()
         # Older dependencies must honor Sherpa's scoped static/shared library selection.
         set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
@@ -69,4 +73,8 @@ if(EDGE_BUILD_TTS)
     target_link_libraries(edge_summer_tts PUBLIC OpenMP::OpenMP_CXX)
     edge_voice_node(tts tts/tts_task.cpp)
     target_link_libraries(edge_tts PRIVATE edge_summer_tts OpenSSL::Crypto)
+endif()
+
+if(EDGE_BUILD_COCKPIT)
+    add_subdirectory(cockpit)
 endif()

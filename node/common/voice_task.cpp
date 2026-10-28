@@ -14,13 +14,17 @@ void VoiceTask::start()
 {
     publisher_ = std::thread([this] { publish(); });
     worker_    = std::thread([this] { run(); });
+    if (supports_cancel()) canceller_ = std::thread([this] { cancel_loop(); });
 }
 void VoiceTask::stop()
 {
     if (stopping_.exchange(true)) return;
-    abort();
     input_cv_.notify_all();
+    output_cv_.notify_all();
+    abort();
     if (worker_.joinable()) worker_.join();
+    input_cv_.notify_all();
+    if (canceller_.joinable()) canceller_.join();
     {
         std::lock_guard<std::mutex> lock(output_mutex_);
         output_stopped_ = true;
@@ -31,19 +35,34 @@ void VoiceTask::stop()
 bool VoiceTask::wait_or_stop(int milliseconds)
 {
     std::unique_lock<std::mutex> lock(input_mutex_);
-    return input_cv_.wait_for(lock, std::chrono::milliseconds(milliseconds), [this] { return stopping(); });
+    return input_cv_.wait_for(lock, std::chrono::milliseconds(milliseconds),
+                              [this] { return stopping() || cancelled(); });
 }
 void VoiceTask::submit(const Json& body, const RequestContext& context)
 {
     if (stopping()) return;
+    if (body.value("object", "") == "llm.cancel") {
+        cancel_request(body, context);
+        return;
+    }
     if (body.value("object", "") == "sys.probe") {
-        emit(context, "sys.probe", body.at("data"));
+        auto data = body.at("data");
+        if (!data.is_object()) data = Json::object();
+        data["protocol_version"]     = 2;
+        data["request_cancellation"] = supports_cancel();
+        {
+            std::lock_guard<std::mutex> lock(input_mutex_);
+            data["idle"] = active_request_.empty() && !cancelling_;
+        }
+        emit(context, "sys.probe", data);
         return;
     }
     std::string error;
     {
         std::lock_guard<std::mutex> lock(input_mutex_);
-        if (paused_)
+        if (cancelling_)
+            error = "task cancellation in progress";
+        else if (paused_)
             error = "task paused";
         else if (std::find(completed_.begin(), completed_.end(), context.request_id) != completed_.end())
             return;
@@ -58,11 +77,11 @@ void VoiceTask::submit(const Json& body, const RequestContext& context)
     }
     if (!error.empty()) {
         // 拒绝新请求不能清除正在执行的请求。
-        std::lock_guard<std::mutex> lock(output_mutex_);
-        output_.push_back({context, "sys.error", nullptr, {{"code", -20}, {"message", error}}});
-        output_cv_.notify_one();
-    } else
-        input_cv_.notify_one();
+        queue_output({context, "sys.error", nullptr, {{"code", -20}, {"message", error}}});
+    } else {
+        if (body.value("ack_requested", false)) emit(context, "sys.accepted", {{"accepted", true}});
+        input_cv_.notify_all();
+    }
 }
 void VoiceTask::finish_request(const std::string& request)
 {
@@ -74,23 +93,80 @@ void VoiceTask::finish_request(const std::string& request)
                                 [&](const VoiceMessage& message) { return message.context.request_id == request; }),
                  input_.end());
 }
+void VoiceTask::queue_output(Output output)
+{
+    std::unique_lock<std::mutex> lock(output_mutex_);
+    output_cv_.wait(lock, [&] { return stopping() || output_.size() < 128; });
+    if (stopping()) return;
+    output_.push_back(std::move(output));
+    output_cv_.notify_all();
+}
 void VoiceTask::emit(const RequestContext& context, const std::string& object, const Json& data, bool terminal)
 {
-    {
-        std::lock_guard<std::mutex> lock(output_mutex_);
-        output_.push_back({context, object, data, nullptr});
-    }
+    queue_output({context, object, data, nullptr});
     if (terminal) finish_request(context.request_id);
-    output_cv_.notify_one();
+    input_cv_.notify_all();
 }
 void VoiceTask::fail(const RequestContext& context, const std::string& message)
 {
-    {
-        std::lock_guard<std::mutex> lock(output_mutex_);
-        output_.push_back({context, "sys.error", nullptr, {{"code", -21}, {"message", message}}});
-    }
+    queue_output({context, "sys.error", nullptr, {{"code", -21}, {"message", message}}});
     finish_request(context.request_id);
-    output_cv_.notify_one();
+    input_cv_.notify_all();
+}
+void VoiceTask::cancel_request(const Json& body, const RequestContext& context)
+{
+    const auto& data = body.at("data");
+    auto target      = data.value("request_id", "");
+    std::string error;
+    bool idle = false;
+    {
+        std::lock_guard<std::mutex> lock(input_mutex_);
+        if (!supports_cancel() || target.empty())
+            error = "request cancellation unsupported or target missing";
+        else if (cancelling_)
+            error = "cancellation already in progress";
+        else if (active_request_.empty())
+            idle = true;
+        else if (active_request_ != target)
+            error = "cancellation target does not match active request";
+        else {
+            cancellation_     = Cancellation{context, target, data};
+            cancelling_       = true;
+            cancel_requested_ = true;
+        }
+    }
+    if (!error.empty())
+        queue_output({context, "sys.error", nullptr, {{"code", -20}, {"message", error}}});
+    else if (idle)
+        emit(context, "llm.cancelled", {{"request_id", target}, {"state", "not_active"}});
+    input_cv_.notify_all();
+}
+void VoiceTask::cancel_loop()
+{
+    for (;;) {
+        Cancellation command;
+        {
+            std::unique_lock<std::mutex> lock(input_mutex_);
+            input_cv_.wait(lock, [&] { return stopping() || cancellation_.has_value(); });
+            if (stopping()) return;
+            command = std::move(*cancellation_);
+            cancellation_.reset();
+        }
+        // 控制线程不排在推理后面；重复取消覆盖 SDK 尚未进入 run 的竞态。
+        for (;;) {
+            cancel_active();
+            std::unique_lock<std::mutex> lock(input_mutex_);
+            if (input_cv_.wait_for(lock, std::chrono::milliseconds(10),
+                                   [&] { return stopping() || active_request_ != command.target; }))
+                break;
+        }
+        {
+            std::lock_guard<std::mutex> lock(input_mutex_);
+            cancelling_       = false;
+            cancel_requested_ = false;
+        }
+        emit(command.context, "llm.cancelled", {{"request_id", command.target}, {"state", "cancelled"}});
+    }
 }
 void VoiceTask::run()
 {
@@ -111,6 +187,7 @@ void VoiceTask::run()
         try {
             if (message.body.contains("error") && message.body["error"].value("code", 0) != 0)
                 throw std::runtime_error("upstream: " + message.body["error"].value("message", "failed"));
+            if (cancelled()) throw std::runtime_error("request cancelled");
             process(message);
         } catch (const std::exception& error) {
             reset_request();
@@ -128,6 +205,7 @@ void VoiceTask::publish()
             if (output_.empty()) return;
             output = std::move(output_.front());
             output_.pop_front();
+            output_cv_.notify_all();
         }
         try {
             if (channel_->send_with_context(output.context, output.object, output.data, output.error))

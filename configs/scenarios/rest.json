@@ -1,0 +1,29 @@
+{
+  "updates": [
+    {
+      "at_ms": 0,
+      "name": "cabin.temperature",
+      "value": 30
+    },
+    {
+      "at_ms": 0,
+      "name": "vehicle.speed",
+      "value": 40
+    },
+    {
+      "at_ms": 0,
+      "name": "interaction.busy",
+      "value": 0
+    },
+    {
+      "at_ms": 0,
+      "name": "driver.present",
+      "value": 1
+    },
+    {
+      "at_ms": 500,
+      "name": "driver.fatigue",
+      "value": 0.9
+    }
+  ]
+}

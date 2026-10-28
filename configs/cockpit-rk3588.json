@@ -1,0 +1,45 @@
+{
+  "asr": {
+    "model_dir": "/opt/edge/models/sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16",
+    "num_threads": 2,
+    "enoutput": true
+  },
+  "llm": {
+    "backend": "rkllm",
+    "model_path": "/opt/edge/models/DeepSeek-R1-Distill-Qwen-1.5B-rk3588-w8a8.rkllm",
+    "system_prompt": "你是车载座舱助手。普通问答用简短中文回答。收到结构化决策要求时只返回指定 JSON，服务是否执行由座舱校验并取得用户确认。",
+    "top_k": 1,
+    "top_p": 0.95,
+    "temperature": 0.8,
+    "repeat_penalty": 1.1,
+    "max_new_tokens": 100,
+    "max_context_len": 256,
+    "enabled_cpus_num": 2,
+    "enabled_cpus_mask": 5,
+    "enoutput": true
+  },
+  "tts": {
+    "model_path": "/opt/edge/models/single_speaker_fast.bin",
+    "num_threads": 2,
+    "stream_timeout_seconds": 120,
+    "enoutput": true
+  },
+  "manager_port": 10001,
+  "cockpit": {
+    "signal_ttl_ms": 2000,
+    "heat_observe_ms": 800,
+    "rest_observe_ms": 2000,
+    "behavior_window_ms": 5000,
+    "fast_lifetime_ms": 5000,
+    "slow_lifetime_ms": 10000,
+    "session_lease_ms": 6000,
+    "confirmation_timeout_ms": 30000,
+    "llm_timeout_ms": 8000,
+    "execution_timeout_ms": 3000,
+    "vehicle": {
+      "mode": "success",
+      "delay_ms": 20,
+      "ac_on": false
+    }
+  }
+}

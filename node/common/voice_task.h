@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <deque>
+#include <optional>
 namespace StackFlows {
 using Json = nlohmann::json;
 struct VoiceMessage {
@@ -26,6 +27,17 @@ protected:
     virtual void process(const VoiceMessage& message) = 0;
     virtual void abort()
     {
+    }
+    virtual bool supports_cancel() const
+    {
+        return false;
+    }
+    virtual void cancel_active()
+    {
+    }
+    bool cancelled() const
+    {
+        return cancel_requested_;
     }
     virtual void on_idle()
     {
@@ -60,12 +72,23 @@ private:
     std::deque<Output> output_;
     std::deque<std::string> completed_;
     std::string active_request_;
-    std::thread worker_, publisher_;
+    std::thread worker_, publisher_, canceller_;
+    struct Cancellation {
+        RequestContext context;
+        std::string target;
+        Json data;
+    };
+    std::optional<Cancellation> cancellation_;
+    std::atomic<bool> cancel_requested_{false};
+    bool cancelling_ = false;
     std::atomic<bool> stopping_{false}, paused_{false};
     bool output_stopped_ = false;
     void finish_request(const std::string& request);
     void run();
     void publish();
+    void cancel_loop();
+    void cancel_request(const Json&, const RequestContext&);
+    void queue_output(Output output);
 };
 using VoiceTaskFactory = std::function<std::shared_ptr<VoiceTask>(std::shared_ptr<llm_channel_obj>, const Json&)>;
 class VoiceNode : public StackFlow {

@@ -1,5 +1,7 @@
 # 车载语音助手接入说明
 
+本文说明原有文件语音演示；自主启动、常驻感知和服务闭环见 [主动座舱运行说明](cockpit.md)。两种模式保留独立入口。
+
 ## 源码复用与任务边界
 
 `VOICE_DEPS_ROOT` 指向抽取后的独立依赖目录，默认是项目下的 `voice-deps/`。ASR/TTS 算法、模型和 RKLLM SDK 均从这里读取，原 `LLM_Voice_Flow-master` 目录不再参与构建和运行。抽取清单、准备方法和 Git 边界见 [语音依赖说明](voice-dependencies.md)。
@@ -84,7 +86,7 @@ TTS：`model_path/output_dir` 必填，`num_threads=2`，`stream_timeout_seconds
 | CMake 变量 | 默认值 |
 | --- | --- |
 | `VOICE_DEPS_ROOT` | 项目下的 `voice-deps/`；构建脚本和 Python 客户端也读取同名环境变量 |
-| `EDGE_BUILD_MANAGER/ASR/TTS` | `ON` |
+| `EDGE_BUILD_MANAGER/ASR/TTS/COCKPIT` | `ON` |
 | `EDGE_ENABLE_RKLLM` | `OFF`；开启时要求目标 AArch64 与匹配的 ELF runtime |
 | `RKLLM_ROOT` | `${VOICE_DEPS_ROOT}/rkllm`；也可指定匹配设备的另一份 SDK |
 | `ZMQ_ROOT` | 可选的目标平台 ZeroMQ 安装前缀 |

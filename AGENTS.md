@@ -2,16 +2,17 @@
 
 ## 定位与边界
 
-- Linux/C++17 单机多进程通信与任务生命周期框架，现有 WAV 文件车载语音助手场景。
+- Linux/C++17 单机多进程通信与任务生命周期框架，已有 WAV 文件语音助手及主动座舱场景。
 - 已有 TCP 网关、任务注册与地址分配、RPC 生命周期、ZMQ 输入与节点订阅；无资源调度、跨设备发现、持久化或故障恢复。
 - `edge_asr` 使用真实 Sherpa-ONNX Zipformer；`edge_llm` 显式选择 mock 或 RKLLM；`edge_tts` 使用真实 SummerTTS 输出 WAV。
-- 首版单会话、每节点一个活动任务、逐轮处理。没有麦克风、播放、唤醒、插话、多轮记忆或车控。
+- 主动模式由独立 Python Supervisor 创建系统 Task；交互会话只绑定/续期，不管理系统 Task。无麦克风、实际播放、真实车控、多轮记忆；车辆执行为显式模拟器。
 - RKLLM 原有真实推理已迁移、SDK 替身已验证、AArch64 真实库链接已检查；没有 RK 设备和适配 `.rkllm` 权重，板端效果未实测。
 
 ## 架构
 
 | 模块 | 职责 |
 | --- | --- |
+| `node/cockpit` | 长期座舱 Task；单 Ingress → SPSC → 单写 Context/FSM，独立模型 I/O、执行和日志线程 |
 | `node/common` | `VoiceNode : StackFlow`、业务队列、输出队列、WAV 读写 |
 | `node/asr` | WAV → 原 Zipformer 在线识别器 → 最终文本 |
 | `node/llm` | 原 llm_demo 的加载、模板、采样、RKLLM run/abort/destroy；mock 共用输出协议 |
@@ -31,7 +32,7 @@
 - 生命周期 RPC 回 `None` 仅表示入队；实际完成响应通过会话 PULL 回 TCP。事件队列使用标准库条件变量，不再依赖 eventpp。
 - 派生节点完成成员初始化后再 `start_events()`；析构先 `stop_events()`，再断开输入、停止业务线程，最后释放任务。旧基类调用方式仍提供自动启动兼容。
 - 新异步节点必须使用 `subscribe_message` / `send_with_context`。每条消息显式复制请求 ID 和回包地址，输出 work_id 属于当前节点。
-- `subscriber_work_id("")` 为本任务输入；指定其他 work_id 则查询上游 `.out_port`。这是订阅连接，不是工作流调度。
+- `subscriber_work_id("")` 为本任务输入；指定其他 work_id 则查询上游 `.out_port`。这是订阅连接，不是工作流调度。主动模式不配置模型间自动订阅，由座舱编排 ASR/LLM/TTS。
 - 外层 JSON 为 `request_id/work_id/action/object/data`，响应带 `created/error`；error 始终为对象。TCP 按换行分帧，上限 1 MiB。
 - 业务对象：`asr.audio.file`（data.path）、`asr.utf-8`、`llm.utf-8.stream`（index/delta/finish）、`tts.audio.file`（path/audio metadata）。
 - LLM/TTS 的 `setup.data.input` 指向上游任务。首次输入前用 `sys.probe` 逐跳确认订阅，不能用固定 sleep 假定首包可靠。
@@ -39,10 +40,24 @@
 - 默认 RPC 为 `ipc:///tmp/rpc.<node>`；环境变量 `EDGE_RPC_DIR` 可隔离会话。默认 manager TCP 10001；任务 IPC 编号池 `[5010,5555)`，每任务两个编号。IPC 编号不是 TCP 端口。
 - manager `key_sql` 仍为带锁内存 map；任务注册持有 shared_ptr，避免发布与释放并发时悬空。无 SQL 引擎。
 
+## 主动座舱约束
+
+- `Supervisor` 是 Python 管理客户端，不继承 `StackFlow`；节点 `CockpitNode` 继承 `StackFlow`，`CockpitTask` 不复用单请求 `VoiceTask`。
+- Supervisor 持有目录锁后检查内核地址占用，只清理无主 Socket 文件；不得覆盖在用地址或普通文件。子进程使用独立会话，Ctrl+C 由 Supervisor 统一安排退出；启动失败记录到 errors.startup。
+- 管理目录通过 `action: runtime` 查询；能力绑定采用完整版本快照及真实 Task ID。模型忙碌或取消未确认不能重新视为 READY。
+- 唯一感知生产者是 Ingress；其他线程经 Unix Datagram/socketpair 桥接。禁止线程池、SDK 回调或回放器直接写 SPSC。
+- 高频固定类型、固定 Context 数组；五种核心业务类型为 SignalUpdate/SignalState/Candidate/ServiceInstance/PendingCall。SDK RequestContext 不扩展成业务状态机。
+- 短暂解除即撤销旧候选，异步结果复核 ID、能力/会话代次和相关信号版本。LLM 只返回白名单建议，用户确认后才调用车辆模拟器。
+- 输出 WAV 仅表示文件就绪；UNKNOWN 执行不重试。manager/模型进程故障只监测和降级，首版不自动重启/重建。
+- 命令行交互只接受明确的 y/n/c 反馈；空行与无效输入不能映射为取消，等待键盘时仍要处理服务终态。
+- 每条入队信号累计阶段时延；每个候选、服务、子调用写终态追踪，缺失阶段为 null。不要逐事件 INFO 日志。
+- `docs/cockpit.md` 是主动模式协议/运行入口；`tests/cockpit_integration.py` 覆盖真实 ASR/TTS、显式 mock LLM，不能代表 RK 真机推理。
+
 ## 构建与验证
 
 ```bash
 ./scripts/build_voice.sh
+./scripts/build_cockpit.sh
 python3 sample/voice_demo.py --rounds 3 --cycles 2
 (cd build/host && ctest --output-on-failure)
 python3 tests/voice_integration.py

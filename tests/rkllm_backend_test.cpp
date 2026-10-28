@@ -66,8 +66,26 @@ int main()
                 backend.run("normal", [&](const std::string& part) { result += part; });
                 check(result == "你好，我是车载语音助手。", "userdata callback/text ownership/think filtering");
             }
-            for (auto prompt : {"error", "return-fail", "missing-finish"})
+            for (auto prompt : {"error", "return-fail", "missing-finish", "oversized-callback"})
                 must_fail([&] { backend.run(prompt, [](const std::string&) {}); }, prompt);
+            {
+                std::atomic<bool> cancelled{false};
+                int previous = stub_runs;
+                std::thread request([&] {
+                    try {
+                        backend.run("abort", [](const std::string&) {});
+                    } catch (...) {
+                        cancelled = true;
+                    }
+                });
+                while (stub_runs == previous) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                backend.cancel();
+                request.join();
+                check(cancelled, "request cancellation stops current inference");
+                std::string next;
+                backend.run("normal", [&](const std::string& part) { next += part; });
+                check(!next.empty(), "request cancellation preserves model for next inference");
+            }
             std::atomic<bool> failed{false};
             int previous = stub_runs;
             std::thread inference([&] {

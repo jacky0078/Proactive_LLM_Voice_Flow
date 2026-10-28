@@ -1,0 +1,35 @@
+{
+  "asr": {
+    "model_dir": "${VOICE_DEPS_ROOT}/models/asr/zipformer",
+    "num_threads": 2,
+    "enoutput": true
+  },
+  "llm": {
+    "backend": "mock",
+    "enoutput": true
+  },
+  "tts": {
+    "model_path": "${VOICE_DEPS_ROOT}/models/tts/single_speaker_fast.bin",
+    "num_threads": 2,
+    "stream_timeout_seconds": 120,
+    "enoutput": true
+  },
+  "manager_port": 10001,
+  "cockpit": {
+    "signal_ttl_ms": 2000,
+    "heat_observe_ms": 800,
+    "rest_observe_ms": 2000,
+    "behavior_window_ms": 5000,
+    "fast_lifetime_ms": 5000,
+    "slow_lifetime_ms": 10000,
+    "session_lease_ms": 6000,
+    "confirmation_timeout_ms": 30000,
+    "llm_timeout_ms": 8000,
+    "execution_timeout_ms": 3000,
+    "vehicle": {
+      "mode": "success",
+      "delay_ms": 20,
+      "ac_on": false
+    }
+  }
+}

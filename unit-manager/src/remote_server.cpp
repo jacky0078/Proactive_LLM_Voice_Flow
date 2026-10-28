@@ -1,3 +1,4 @@
+#include "runtime_directory.h"
 /* SPDX-License-Identifier: MIT */
 #include "remote_server.h"
 #include "remote_action.h"
@@ -97,7 +98,9 @@ void unit_action_match(int com_id, const std::string& raw)
         j.at("object").get<std::string>();
         j.at("data");
         if (request.empty() || work.empty() || action.empty()) throw std::runtime_error("empty request fields");
-        if (action == "inference") {
+        if (action == "runtime") {
+            runtime_action(com_id, j);
+        } else if (action == "inference") {
             char reply[256];
             snprintf(reply, sizeof(reply), zmq_c_format.c_str(), com_id);
             j["zmq_com"] = reply;

@@ -1,8 +1,5 @@
-find_package(Boost REQUIRED)
-find_library(EDGE_GLOG_LIBRARY glog REQUIRED)
-add_subdirectory(../network/src "${CMAKE_BINARY_DIR}/network")
 add_executable(unit_manager src/main.cpp src/config.cpp src/tcp_comm.cpp src/remote_server.cpp
-  src/remote_action.cpp src/unit_data.cpp src/zmq_bus.cpp)
+  src/remote_action.cpp src/runtime_directory.cpp src/unit_data.cpp src/zmq_bus.cpp)
 target_include_directories(unit_manager PRIVATE include ${Boost_INCLUDE_DIRS})
 target_link_libraries(unit_manager PRIVATE stackflow network ${EDGE_GLOG_LIBRARY})
 target_compile_definitions(unit_manager PRIVATE EDGE_DEFAULT_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/master_config.json")

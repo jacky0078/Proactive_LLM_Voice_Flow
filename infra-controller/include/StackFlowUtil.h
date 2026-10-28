@@ -26,4 +26,4 @@ void unit_call(const std::string &unit_name, const std::string &unit_action, con
 
 bool file_exists(const std::string& filePath);
 void unicode_to_utf8(unsigned int codepoint, char *output, int *length);
-};  // namespace StackFlows
+}  // namespace StackFlows

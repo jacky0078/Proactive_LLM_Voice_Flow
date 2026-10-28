@@ -11,6 +11,7 @@ public:
     ~RkLlmBackend();
     void run(const std::string& prompt, std::function<void(const std::string&)> output);
     void abort();
+    void cancel();
 
 private:
     struct Impl;

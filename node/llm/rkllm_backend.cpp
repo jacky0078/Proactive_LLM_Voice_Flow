@@ -18,8 +18,9 @@ struct RkLlmBackend::Impl {
     LLMHandle handle = nullptr;
     std::string model_path, system_prompt;
     std::mutex handle_mutex;
-    bool running = false;
-    bool stopped = false;
+    bool running   = false;
+    bool stopped   = false;
+    bool cancelled = false;
     struct Run {
         struct Event {
             std::string text;
@@ -42,12 +43,18 @@ struct RkLlmBackend::Impl {
             Run::Event event{state == RKLLM_RUN_NORMAL && result && result->text ? result->text : "", state};
             {
                 std::lock_guard<std::mutex> lock(run->mutex);
-                run->events.push_back(std::move(event));
+                if (run->exception) return;
+                if (run->events.size() >= 128 || event.text.size() > 8192) {
+                    run->exception = std::make_exception_ptr(std::runtime_error("RKLLM callback queue overflow"));
+                } else {
+                    run->events.push_back(std::move(event));
+                }
             }
             run->cv.notify_one();
         } catch (...) {
             std::lock_guard<std::mutex> lock(run->mutex);
             run->exception = std::current_exception();
+            run->cv.notify_one();
         }
     }
 };
@@ -107,6 +114,13 @@ void RkLlmBackend::abort()
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 }
+void RkLlmBackend::cancel()
+{
+    std::lock_guard<std::mutex> lock(impl_->handle_mutex);
+    if (!impl_->running) return;
+    impl_->cancelled = true;
+    if (rkllm_abort(impl_->handle)) std::cerr << "rkllm request cancellation failed\n";
+}
 void RkLlmBackend::run(const std::string& prompt, std::function<void(const std::string&)> output)
 {
     Impl::Run run;
@@ -114,7 +128,8 @@ void RkLlmBackend::run(const std::string& prompt, std::function<void(const std::
         std::lock_guard<std::mutex> lock(impl_->handle_mutex);
         if (impl_->stopped) throw std::runtime_error("RKLLM task stopping");
         if (impl_->running) throw std::runtime_error("RKLLM task busy");
-        impl_->running = true;
+        impl_->running   = true;
+        impl_->cancelled = false;
     }
     std::thread results([&] {
         try {
@@ -123,7 +138,8 @@ void RkLlmBackend::run(const std::string& prompt, std::function<void(const std::
                 Impl::Run::Event event;
                 {
                     std::unique_lock<std::mutex> lock(run.mutex);
-                    run.cv.wait(lock, [&] { return run.done || !run.events.empty(); });
+                    run.cv.wait(lock, [&] { return run.done || run.exception || !run.events.empty(); });
+                    if (run.exception) break;
                     if (run.events.empty()) break;
                     event = std::move(run.events.front());
                     run.events.pop_front();
@@ -158,7 +174,7 @@ void RkLlmBackend::run(const std::string& prompt, std::function<void(const std::
     {
         std::lock_guard<std::mutex> lock(impl_->handle_mutex);
         impl_->running = false;
-        stopped        = impl_->stopped;
+        stopped        = impl_->stopped || impl_->cancelled;
     }
     if (run.exception) std::rethrow_exception(run.exception);
     if (rc || run.failed || !run.finished || stopped)

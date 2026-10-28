@@ -47,14 +47,14 @@ namespace network
 
   void Poller::poll(int timeoutMs, ChannelList *activeChannels)
   {
-    // LOG(INFO) << "fd total count " << channels_.size();
+    // VLOG(1) << "fd total count " << channels_.size();
     int numEvents = ::epoll_wait(epollfd_, &*events_.begin(),
                                  static_cast<int>(events_.size()), timeoutMs);
     int savedErrno = errno;
 
     if (numEvents > 0)
     {
-      LOG(INFO) << numEvents << " events happened";
+      VLOG(1) << numEvents << " events happened";
       fillActiveChannels(numEvents, activeChannels);
       if (size_t(numEvents) == events_.size())
       {
@@ -63,7 +63,7 @@ namespace network
     }
     else if (numEvents == 0)
     {
-      // LOG(INFO) << "nothing happened";
+      // VLOG(1) << "nothing happened";
     }
     else
     {
@@ -98,7 +98,7 @@ namespace network
   {
     Poller::assertInLoopThread();
     const int index = channel->index();
-    LOG(INFO) << "fd = " << channel->fd() << " events = " << channel->events()
+    VLOG(1) << "fd = " << channel->fd() << " events = " << channel->events()
               << " index = " << index;
     if (index == kNew || index == kDeleted)
     {
@@ -142,7 +142,7 @@ namespace network
   {
     Poller::assertInLoopThread();
     int fd = channel->fd();
-    LOG(INFO) << "fd = " << fd;
+    VLOG(1) << "fd = " << fd;
     assert(channels_.find(fd) != channels_.end());
     assert(channels_[fd] == channel);
     assert(channel->isNoneEvent());
